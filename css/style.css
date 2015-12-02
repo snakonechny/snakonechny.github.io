@@ -358,7 +358,7 @@ section.section {
 .navbar .navbar-collapse {
 	margin-bottom: 0;
 	padding-bottom:0;
-	text-align: center !important;
+	text-align: center;
 }
 
 .nav li {
