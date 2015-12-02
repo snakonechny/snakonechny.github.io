@@ -405,9 +405,12 @@ h1 a.navbar-brand {
 }
 
 .navbar-brand {
+	position:absolute;
 	padding: 0;
 	display: table-cell;
 	vertical-align: middle;
+	text-align: center;
+	margin: auto;
 	line-height: 100px;
 }
 
