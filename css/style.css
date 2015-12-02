@@ -388,7 +388,6 @@ section.section {
 	float: none;
 	margin-bottom: 0;
 	padding-bottom:0;
-	text-align: center;
 }
 
 .navbar .navbar-nav > .active > a {
@@ -1078,6 +1077,7 @@ Media queries
 		float: none;
 		margin:0;
 		padding:0;
+		text-align: center;
 	}
 	.navbar .navbar-collapse ul.nav li {
 		border-bottom: 1px solid #666;
