@@ -386,6 +386,7 @@ section.section {
 }
 
 .navbar-nav {
+	display: inline-block;
 	float: none;
 	margin-bottom: 0;
 	padding-bottom:0;
