@@ -385,7 +385,7 @@ section.section {
 }
 
 .navbar-nav {
-	float: none;
+	float: center;
 	margin-bottom: 0;
 	padding-bottom:0;
 }
