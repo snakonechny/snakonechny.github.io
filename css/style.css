@@ -387,9 +387,9 @@ section.section {
 
 .navbar-nav {
 	float: none;
+	display: inline-block;
 	margin-bottom: 0;
 	padding-bottom:0;
-	text-align: center;
 }
 
 .navbar .navbar-nav > .active > a {
