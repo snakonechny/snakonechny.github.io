@@ -541,7 +541,7 @@ section.featured.inner {
 	width: 100% !important;
 	position: relative;
 	padding: 0;
-	max-height: 650px !important;
+	/*max-height: 650px !important;*/
 	overflow: hidden;
 }
 
