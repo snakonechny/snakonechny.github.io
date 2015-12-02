@@ -385,7 +385,7 @@ section.section {
 }
 
 .navbar-nav {
-	float: center;
+	float: none;
 	margin-bottom: 0;
 	padding-bottom:0;
 }
@@ -1077,6 +1077,7 @@ Media queries
 		float: none;
 		margin:0;
 		padding:0;
+		text-align: center;
 	}
 	.navbar .navbar-collapse ul.nav li {
 		border-bottom: 1px solid #666;
