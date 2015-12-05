@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+<title>Heavyweight boxing - has it gotten easier to become the champ?</title>
+
+<link rel="stylesheet" href="/path/to/styles/default.css">
+<script src="/path/to/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+<!--
+control for changing heights of objects
+-->
+
+
+<xmp theme="Spacelab" style="display:none;">
+
+## Prelude
+I've been thinking about this one for a while: has the world of heavyweight boxing become less competitive? It sure seems that way: the excitement of high-caliber bouts, [where one of the fighters generates enough hype to occupy resident ESPN pundits for weeks and the other - quietly sits back and observes the mass hysteria](https://www.youtube.com/watch?v=7Ec-KhDbanc), are long gone. Long gone as well are the days [when fairytales of people's heroes could give hope to an entire nation and produce epic Russell Crowe movies](https://www.youtube.com/watch?v=JCKh3Jsge4E). The sport isn't what it once was. As it stands, across all weight divisions and geographies, money rules things, occasionally allows for a talented fighter to challenge the incumbent champion, and produces little beyond revenue for HBO.
+
+Has the elite division of boxing become boring then? Has it gotten easier to win and hold on to a heavyweight title? I've thought for a long time about answering this question with data, and here is what I came up with it.
+
+## Obtaining the data
+I didn't get to sentimentalize for too long; naturally, to answer this question, I needed to get my hands on some boxing data. My options weren't many. Internets' most comprehensive source of boxing statistics is www.boxrec.com. The data, however, aren't easily available and 'gettable' (no API or even data dumps). Scrapping efforts fell apart after a few tries.
+
+Option 2 is Wikipedia. The scrupulous editors of the global bank of knowledge have not only produced a list of every heavyweight champion since mid 1800s but have also formatted boxers' record tables in a consistent manner (almost, sort of). Thus was made the decision to scoop up Wikipedia's pages of individual boxers, find their professional records, clean these up and standardize them, and then do some visualizing and analyzing.
+
+Then came the question of tools. R was an uncontested candidate, as it is my favorite sledgehammer. I also decided to stick to [Hadley Wickham's](http://had.co.nz/) phenomenal ecosystem of R packages, mostly out of curiosity and for learning purposes. Hadley authored and co-authored several packages that greatly simplify the process data analysis in R, starting from obtaining the data (scrapping it with [rvest](https://github.com/hadley/rvest), in this case), cleaning and reformatting the data ([stringr](https://github.com/hadley/stringr)), and manipulating these data to make them useful ([dplyr](https://github.com/hadley/dplyr)).
+
+So the process should be quite simple, in principle. Image below.
+
+![Plan of attack](assets/boxing/whiteboard.jpg)
+
+Starting point was the URL where this master list of heavyweight champions lives. The idea was to scan this page and find the XML table with boxer names and URLs.
+
+<pre><code class="R">
+url <- "https://en.wikipedia.org/wiki/List_of_heavyweight_boxing_champions"
+</code></pre>
+
+rvest allows picking out the object of interest using CSS tags, which, in turn, are picked up using [the infinitely useful SelectorGadget](http://selectorgadget.com/). We'll first parse the page and do just that.
+
+<pre><code class="R">
+master.page_parsed <- html(url)
+master.links <- master.page_parsed %>% html_nodes("td+ td > a") %>% html_attr("href") %>% XML::getRelativeURL(url)
+</code></pre>
+
+The object that resulted, here descriptively called `master.links`, conveniently contains master links to the pages of every heavyweight boxer since 1860s. Note, I'm using term "master" rather arbitrarily throughout this entire project; it simply refers to some list or data frame I'll be using throughout the process of scrapping and cleaning the data.
+
+This is what its top few rows look like:
+
+<pre><code class="R">
+    head(master.links)
+
+    /wiki/John_L._Sullivan
+    "https://en.wikipedia.org/wiki/John_L._Sullivan"
+    /wiki/James_J._Corbett
+    "https://en.wikipedia.org/wiki/James_J._Corbett"
+</code></pre>
+
+It might be worth pointing out that this `master.links` object is actually a [named vector](http://www.r-tutor.com/r-introduction/vector/named-vector-members); its elements' names are boxers' names (Wikipedia-style page names, actually, but we can certainly work with that). This will become quite useful down the road.
+
+Given this master list of links, we can write another loop to go to each one of them, find the table of that specific boxer's fight history, ensure that it complies with the format of all other boxer histories, and append it onto some larger *master data frame* where each row is a separate bout with its attributes.
+
+I ran into a lot of issues when putting this loop together and wished I could find a working example of how something like this could be done. I will therefore first present the entire loop and then break it down into parts and comments. Hopefully this might be helpful to somebody trying to accomplish something similar.
+
+First, let's set up a starter data frame to which all other boxer records' will be appended.
+
+<pre><code class="R">
+    table.list <- html(master.links[1]) %>% html_table(header=TRUE, fill=TRUE)
+    n.rows <- unlist(lapply(table.list, function(t) dim(t)[1]))
+    table_interm <- table.list[which.max(n.rows)] %>% data.frame(row.names = NULL)
+    master.df <- table_interm[-1,]
+    boxer.nameunder <- str_sub(names(master.links[1]), 7)
+    boxer.name <- gsub("_", " ", boxer.nameunder)
+    colnames(master.df) <- c("Res.", "Record", "Opponent", "Type", "Round", "Date", "Location", "Notes")
+    master.df$Fighter <- boxer.name
+</code></pre>
+
+We'll follow the same structure for the actual loop to pick up the rest of the match records, except there will be a few "circuit breakers" that will account for any records whose formatting is off.
+
+<pre><code class="R">
+    for (link in master.links[2:length(master.links)]) {
+      table.list <- html(link) %>% html_table(header=TRUE, fill=TRUE)
+      n.rows <- unlist(lapply(table.list, function(t) dim(t)[1]))
+      table_interm <- table.list[which.max(n.rows)] %>% data.frame(row.names = NULL)
+      table_boxer <- table_interm[-1,]
+
+          if (ncol(table_boxer) == 8) {
+          round <- as.integer(trimws(str_sub(table_boxer[1,5], start=1, end=2)))
+
+          if (is.na(round)==FALSE) {
+          boxer.nameunder <- str_sub(toString(link), 31)
+          boxer.name <- gsub("_", " ", boxer.nameunder)
+          colnames(table_boxer) <- c("Res.", "Record", "Opponent", "Type", "Round", "Date", "Location", "Notes")
+          table_boxer$Fighter <- boxer.name
+          table_boxer <- data.frame(table_boxer)
+          master.df <- rbind.fill(master.df, table_boxer)
+        }
+
+        if (is.na(round)==TRUE) {
+        trouble.list <- c(trouble.list, link)
+        }}
+
+        else {
+        trouble.list <- c(trouble.list, link)
+       }
+    }
+
+</code></pre>
+
+Strictly speaking, I cheated here a bit. I knew that certain records tables will be off and could more or less guess why they would be off. A simple rule of thumb for figuring out that any given table wasn't formatted correctly is its dimensions, specifically column count; if it's not eight (lines 7-8), that boxer goes on the trouble list. Or if one of the columns (I picked column #5, which in theory should be an integer across all tables) isn't complying with the rest, trouble list again. These basic checking rules covered 79 of the 87 boxers. The troubled seven were added to the master list manually, after I looked at each of their pages individually; one boxer had no historical data altogether.
+
+It's also worth noting that this scrapper of mine relies on picking out the longest (by rows) table on a boxer page. That actually worked 85 of the 86 pages (87th, again, had no boxer records on it).
+
+In the next post I'll discuss all the formatting and cleaning I did to prepare the final, master table of every fight every heavyweight champion has fought since 1940s.
+
+##Cleanup
+
+Fun part, as always. The data aren't terribly messy, but there are some inconsistencies that ought to be addressed.
+
+* dates are formatted in at least three different manners; we'll use [lubridate](https://github.com/hadley/lubridate) to fix this
+* some columns have trailing spaces - trimming is required
+* so far, our only identifier for any given boxer is their name (a string); instead, these should be labeled by an integer ID
+
+### Lubridating
+
+This package makes dealing with date formatting problems rather simple; define your data format, here as `date.formats`, then parse the date column. The result is glorious, consistently formatted column called `Date.formatted` (I'm clearly having too much fun with obvious column naming).
+
+<pre><code class="R">
+date.formats <- c('%d/%m/%Y', '%Y-%m-%d', '%B %d, %Y')
+master.copy$Date.formatted <- parse_date_time(master.copy$Date, orders = date.formats)
+</code></pre>
+
+### Trimming
+
+Again, this task is extremely simple if the base `trimws` function is employed.
+
+<pre><code class="R">
+master.copy$Round <- trimws(str_sub(master.copy$Round, start = 1, end = 2))
+</code></pre>
+
+### IDs
+
+So far so good. Assigning IDs, however, though in no way complicated, requires a few more than two lines of code. Here's the workflow: grab every boxer name in the dataset (NAs are removed by now), pick out the unique ones, generate an integer ID, match the boxer names in the original data frame with these IDs (now we'll have two additional columns, obviously).
+
+<pre><code class="R">
+
+index.list <- unique(c(master.df$Opponent, master.df$Fighter))
+
+index.ids <- as.numeric(as.factor(index.list))
+index.list <- as.data.frame(cbind(index.list, index.ids))
+
+colnames(index.list) <- c("Fighter", "Fighter.id")
+master.copy <- left_join(master.df, index.list, "Fighter")
+
+colnames(index.list) <- c("Opponent", "Opponent.id")
+master.copy <- left_join(master.copy, index.list, "Opponent")
+
+</code></pre>
+
+After these manipulations, here's what we should see:
+
+<pre><code class="R">
+
+head(master.copy)
+
+Source: local data frame [6 x 12]
+
+  Res. Record           Opponent Type Round       Date                                                Location
+1  Win   49–0       Archie Moore   KO     9 21/09/1955          Yankee Stadium, Bronx, New York, United States
+2  Win   48–0        Don Cockell  TKO     9 16/05/1955 Kezar Stadium, San Francisco, California, United States
+3  Win   47–0     Ezzard Charles   KO     8 17/09/1954          Yankee Stadium, Bronx, New York, United States
+4  Win   46–0     Ezzard Charles   UD    15 17/06/1954          Yankee Stadium, Bronx, New York, United States
+5  Win   45–0   Roland La Starza  TKO    11 24/09/1953         Polo Grounds, New York, New York, United States
+6  Win   44–0 Jersey Joe Walcott   KO     1 15/05/1953       Chicago Stadium, Chicago, Illinois, United States
+Variables not shown: Notes (chr), Fighter (chr), Fighter.id (fctr), Opponent.id (fctr), Date.formatted (time)
+
+</code></pre>
+
+To sum up, our `master.copy` consists of individual bouts as rows, with some useful columns. To make these data more useful, we need to do some more construction work. For example, rows that involved title contentions should be marked as such, as well as rows in which any given fighter lost or gained his World heavyweight belt.
+
+Let's start with the former one first:
+
+<pre><code class="R">
+for (i in 1:nrow(master.copy)) {
+  title.check <- str_detect(master.copy$Notes[i], pattern = '[a-zA-Z]+itle')
+  title.eliminator <- str_detect(master.copy$Notes[i], pattern = '[a-zA-Z]+liminator')
+  title.heavyweight <- str_detect(master.copy$Notes[i], pattern = '[a-zA-Z]+eavyweight')
+
+  if (is.na(title.check)==FALSE) {
+    if ((title.check == TRUE) && (title.eliminator == FALSE) && (title.heavyweight == TRUE)) {
+      master.copy$Title[i] = 1
+    }
+  }
+}
+
+</code></pre>
+
+The logic here is that if in the notes of any given fight (column called `Notes`), there is 1) a word that resembles "heavyweight", 2) an indication that this bout was not an elimination bout, 3) a word that resembles "title", and 4) an indication that this bout was won, then it must be a title fight of some sort (not necessarily a World heavyweight championship, but a title nonetheless).
+
+Some of those title contentions, naturally, had to be matches where one boxer in the pair obtained his first recognized heavyweight belt, thus becoming a Heavyweight Boxing Champion of the World. Picking these out is a bit tricky: for one, where money is also lives politics: high profile bouts attract sponsors, TV cameras, and audiences, and many "organizations" would like to award such high profile titles but carry no competitive weight behind them whatsoever. To simply things, we'll mark only fights sanctioned by the IBF, WBA, WBC, and WBO as world heavyweight contentions. Before 1960s, however, these federations or organizations didn't exist as such. Heavyweight title was awarded by a number of other organizations of varying obscurity and was simply called "World Heavyweight" or "European Heavyweight" title. We'll include these filters also. In other words, this loop will indicate every instance when any given fighter gained or regained (retained) a heavyweight title.
+
+<pre><code class="R">
+
+for (i in 1:nrow(master.copy)) {
+  world.title.check <- str_detect(master.copy$Notes[i], pattern = c("IBF", "WHO", "WBA", "WBC", "[a-zA-Z]+orld [a-zA-Z]+eavyweight", "EBU"))
+
+  if (is.na(world.title.check) == FALSE) {
+    if ((master.copy$Res.[i] == 'Win') && any(world.title.check == TRUE))  {
+    master.copy$Title.hwc[i] = 1
+    }
+  }
+}
+
+</code></pre>
+
+I followed similar logic and methods as above (detecting strings in the `Notes` column) to label column 'Title.defense' with 1 if a row represents a bout where a title was contested but the original owner (the defending champion) retained it.
+
+<pre><code class="R">
+
+for (i in 1:nrow(master.copy)) {
+    world.title.check <- str_detect(master.copy$Notes[i], pattern = c("IBF", "WHO", "WBA", "WBC", "[a-zA-Z]+orld [a-zA-Z]+eavyweight", "EBU"))
+    title.retained <- str_detect(master.copy$Notes[i], pattern = "[a-zA-Z]+etained")
+  if (is.na(world.title.check) == FALSE && is.na(title.retained) == FALSE) {
+    if (master.copy$Res.[i] == 'Win' && title.retained == TRUE && any(world.title.check == TRUE))  {
+      master.copy$Title.defense[i] = 1
+    }
+  }
+}
+
+
+if (master.copy$Title[i] == 1 & master.copy$Title.hwc[i] == 0) {
+master.copy$Title.defense = 1
+}
+
+</code></pre>
+
+There was one last piece of data manipulation - restructuring these fights data into boxer statistics. For starters, I put together basic descriptive info about every heavyweight champion, such as the number of rounds/bouts they've fought in their professional career, the number of wins and the ratio of these wins to the total number of bouts, etc. This should give us some sense as to what these fighters look like numerically.
+
+<pre><code class="R">
+
+#Count the number of bouts and rounds each champion has fought; we'll use dplyr for this
+rounds.bouts <- master.copy %>% group_by(Fighter) %>% summarize(Rounds = sum(as.integer(Round), na.rm = TRUE), Bouts = n())
+
+#Figure out title stats
+title.fights <- master.copy %>% group_by(Fighter) %>% filter(Title == 1) %>% summarize('Title Fights' = n())
+title.fights.won <- master.copy %>% group_by(Fighter) %>% filter(Title == 1 & Res. == 'Win') %>% summarize('Title fights won' = n())
+title.ratio <- round(title.fights.won[,2]/title.fights[,2], 2)
+
+#Compile the wins/losses stats, along with wins by knock outs
+wins <- master.copy %>% group_by(Fighter) %>% filter(Res. == 'Win') %>% summarize(Wins = n())
+kos <- master.copy %>% group_by(Fighter) %>% filter(Type == 'KO') %>% summarize(KOs = n())
+wins.bouts <- (wins$Wins)/(rounds.bouts$Bouts)
+
+champion.stats <- cbind(rounds.bouts, wins$Wins, round(wins.bouts, 2), title.fights$`Title Fights`, kos$KOs, round(ARB, 2))
+colnames(champion.stats) <- c('Fighter', 'Rounds', 'Bouts', 'Wins', 'Wins to Bouts ratio','Title fights', 'KOs', 'ARB')
+
+</code></pre>
+
+With these basic metrics computed, let's look at them in a some sort of an organized manner. Here the [DT package from RStudio](https://rstudio.github.io/DT/) becomes rather handy. This package generates an interactive data table using the JavaScript DataTables library. The endproduct can be embedded on an HTML page, as I did here.
+
+
+<iframe src='assets/boxing/graph.html' scrolling='no' seamless class='rChart datamaps'
+  id=iframe-chart_1></iframe>
+
+<style>iframe.rChart{ width: 100%; height: 600px;}</style>
+
+The table is useful for some careless poking around but not much beyond that. It's interesting to know, for instance, that [Rocky Marciano](https://en.wikipedia.org/wiki/Rocky_Marciano), a pre-Ali era champion, is the only undefeated title holder. The man actually retired with his belts, after winning 49 bouts, 42 of which he won with a knockout. A certain [Larry Holmes](https://en.wikipedia.org/wiki/Larry_Holmes) fought some incredible 581 rounds of professional boxing, the most out of all heavyweights; the reigning heavyweight champion [Volodymyr Klitschko](https://en.wikipedia.org/wiki/Wladimir_Klitschko) has so far fought mere 347. The most challenged champions are [Roy Jones, Jr.](https://en.wikipedia.org/wiki/Roy_Jones,_Jr.) and Klitschko junior, though the latter will soon overtake the former in the number of title fights.
+
+Again, this is neat, but it doesn't really get at the question I originally asked. To determine whether it's gotten easier to become the champ, we ought to involve a time component and trend some concrete metrics over it.
+
+##Actual data analysis
+
+By the looks of it, the data are all neat and tidy, and we have some features needed to answer the question that provoked this small project (we can and will construct more variables from the ones already there).
+
+I reckon it's best to follow my original thinking when formatting the post. My thinking #1 settled on the idea of studying the "spectacularness" of the heavyweight bouts over time. One way of quantifying that spectacularness is analyzing the number of rounds it took to produce the match-winning blow to the opponent; conveniently, that's precisely what the `Rounds` field captures.
+
+### Rounds of heat
+Let's, perhaps, look at the number of rounds in which past heavyweight champions completed their bouts. It's a basic frequency crosstab we're looking for, though to visualize it, something like a heatmap, maybe even an interactive heatmap, might be of use.
+
+[The htmlwidgets package](https://github.com/rstudio/d3heatmap) features a neat little function that creates these interactive objects. `d3heatmap` takes in a matrix (or something that resembles a matrix) and outputs a grid where cells are colored according to the underlying value, in our case, according to the number of fights a fighter won in, say, third or eighth round. This will become clearer further down.
+
+A bit of data transformation to prepare our frequency crosstab:
+
+<pre><code class="R">
+#Create the matrix, here a crosstab between fighter names and round count`
+rounds.matrix <- as.data.frame.matrix(table(master.copy$Fighter, master.copy$Round), stringsAsFactors = TRUE)
+
+</code></pre>
+
+We should now introduce some time component: let's, for instance, order the fighters chrnologically, by the date of their first title challenge. This way, younger boxers should come towards the tail end.
+
+<pre><code class="R">
+
+#First sort, according to the first title fight a champion parttook in; this will create a list (index) of the date of the first title fight for every boxer in our dataset
+
+boxer.index <- master.copy[master.copy$Title == 1,]
+boxer.index <- boxer.index[order(boxer.index$Fighter),]
+boxer.index <- boxer.index[order(boxer.index$Date.formatted, decreasing = FALSE),]
+boxer.index <- boxer.index[!duplicated(boxer.index$Fighter),]
+
+#Now reorder the crosstab/matrix based on the order created in boxer.index
+rounds.matrix <- rounds.matrix[rownames(boxer.index),, drop = FALSE]
+
+#We'll remove the last column - one of the boxers seems to have fought 20 rounds once; must be a data entry error
+rounds.matrix <- rounds.matrix[,1:15]
+
+</code></pre>
+
+Finally, let's make our first pretty picture
+
+<pre><code class="R">
+#Creating the heatmap
+
+rounds.label <- c("Round 1", "Round 2", "Round 3", "Round 4", "Round 5", "Round 6", "Round 7", "Round 8", "Round 9", "Round 10", "Round 11", "Round 12", "Round 13", "Round 14", "Round 15")
+heatmap <- d3heatmap(rounds.matrix, scale = "row", colors = "Blues", dendrogram = "none", Rowv = FALSE, Colv = FALSE, labCol = rounds.label)
+
+</code></pre>
+
+The heatmap doesn't display correctly on this page. It covers some controls and the hover menu isn't showing up. It does, however, work well on a separate page. The interactive heatmap shows boxer's name and cell value when hovered over.
+
+![](assets/boxing/heatmap.png)
+[*Click here to see the interactive heatmap*](assets/boxing/heatmap-test.html)
+
+Glancing at the heatmap, no apparent pattern stands out. Darker colors (indicate higher number of decisions in that particular cell-round) are quite frequent in the first round across the time horizon. There were and still are many fights that see a knock out on the onset of the bout, though these seem more acute in recent years. On the other hand, the title fights of 1960s and 70s experienced tons of late closers. In the era of Ken Norton and Larry Holmes longer fights appear more common. Interestingly, recent fights also tend to stretch out into the allotted 12 rounds: ask any Klitschko hater and they'll tell you that the brothers dragged out the bouts for way too long.
+
+### How long are these fights?
+
+Now that we've looked at the distribution of finishes among boxers, it may be also useful to study how average decision length trends over time. Here, too, we'll create a nice line chart by using [Ramnath Vaidyanathan's rCharts wrapper for d3js](http://rcharts.io/).
+
+First, let's compute the average number of rounds for all heavyweight title fights fought in any given year:
+
+<pre><code class="R">
+
+rounds.mean.hw <- master.copy %>% filter(Title.hwc == 1) %>% group_by(Year) %>% summarize(Average = mean(Round))
+
+</code></pre>
+
+Now let's create the said line graph:
+
+<pre><code class="R">
+time.graph <- xPlot(Average ~ Year, data = rounds.mean.hw, type = 'line-dotted')
+
+#and now we'll export it to integrate the graph object into this page
+
+time.graph$save('average_rounds.html', cdn = TRUE)
+</code></pre>
+
+[*Click here to view the graph*](assets/boxing/average_rounds.html)
+
+This metrics seems rather volatile in the early years of observation. The peaks and the troughs are logical here: for some years, only one or two title bouts took place, and they one or two rounds was enough to seal the belt's fate. In other years, boxers took the full 15 rounds to decide who is stronger. Both scenarios seem rather spectacular. Over time, however, the average length of a title bout stabilized somewhere around eight rounds. Important here is the observation that the number of title fights, too, increased over time. Takeaway - these title bouts do seem to have become rather average.
+
+### How about them boxers?
+
+Until now we focused on individual boxers and bout statistics. It might be interesting to explicitly convert boxers into units of analysis (forgive the jargon): how long, for example, did it take for boxers to get to a heavyweight title fight? Let's try mapping this over time.
+
+The task is simple in principle. We need to count the number of fights before the first heavyweight title fight and somehow graphically present this. I borrowed the solution from [Shane's Stackoverflow post](http://stackoverflow.com/questions/1502910/how-can-i-count-runs-in-a-sequence) - I think this is an extremely efficient way of computing these counts and one I wasn't aware of.
+
+<pre><code class="R">
+#first, let's reverse the sorting of the bouts within each boxer group; earlier fights will come first
+master.copy <- master.copy %>% group_by(Fighter) %>% arrange(Date.formatted)
+
+#create an empty object to append results to
+count.pretitle <- ''
+
+#now generate a basic index of fighters we'll use as reference for the loop
+fighter.index <- unique(master.copy$Fighter)
+
+#and now the loop itself
+for (fighter in fighter.index) {
+  temp <- master.copy %>% filter(Fighter == fighter)
+  diffs <- temp$Title[-1L] != temp$Title[-length(temp$Title)]
+  idx <- c(which(diffs), length(temp$Title))
+  count.pretitle <- rbind(count.pretitle, data.frame(fighter, idx[1]))
+  }
+
+
+head(count.pretitle)
+             fighter idx.1.
+1               <NA>
+2 Alexander Povetkin     21
+3   Bermane Stiverne     21
+4       Bruce Seldon     20
+5     Buster Douglas     28
+6         Chris Byrd     31
+
+#we'll need to get rid of the NA in the first row
+count.pretitle <- count.pretitle[-1,]
+
+#and now we'll order the results of this loop according to the same logic we used earlier, by the date of the first belt challenge. I realize this isn't a very conventional method for achieving the sorting I'm looking for, but I couldn't get the rows to take on the order I wanted. Instead, I simply joined the earlier fighter list with correct ordering to my data from the loop above.
+
+colnames(count.pretitle) <- c('Fighter', 'Bouts')
+count.pretitle <- left_join(boxer.index, count.pretitle, by = 'Fighter')
+
+</code></pre>
+
+The result is a simple data frame, where each row is a boxer (sorted based on when they had their first title fight) alongside the number of fights they had to partake in before their first title shot. Let's try to visualize it.
+
+As an aside, I'm a big fan of the dot plots. I first came across these in [Dr Naomi Robbins' *Creating More Effective Graphs*](http://www.amazon.com/Creating-Effective-Graphs-Naomi-Robbins/dp/0985911123/ref=sr_1_1?ie=UTF8&qid=1442430824&sr=8-1&keywords=creating+more+effective+graphs). I originally planned to draw up a quick static dot plot to illustrate the above data frame, but I ran into the problem of a very dispersed and confusing dot plot if I enforced my sorting rule. A seemingly cleaner way to show these data is a horizontal bar graph you'll see below.
+
+<pre><code class="R">
+#first, transform the Fighter column into factors; this will preserve my desired order
+count.pretitle <- transform(count.pretitle, Fighter = factor(Fighter, levels=unique(Fighter)))
+
+#We'll also have to transform the number of bouts to integers
+count.pretitle$Bouts <- as.integer(count.pretitle$Bouts)
+
+#now apply a bit of ggploting to create the graph
+bouts.graph <- ggplot(count.pretitle) + geom_bar(aes(x=Fighter, y=Bouts), fill='gray', stat = 'identity') + coord_flip() + theme(axis.text.y = element_text(size=rel(.8))) + theme(panel.grid.major.x = element_blank(), panel.grid.major.y = element_line(linetype=3, color='darkgray')) + stat_smooth(aes(x=Fighter, y=Bouts, group = 1), se = FALSE) + ylab("Bouts before first belt challenge")
+
+</code></pre>
+
+![](/assets/bouts-pretitle.jpeg){: .center-image }
+
+By the looks of it, there are a handful of fighters who had to work extremely hard to even get to their first title shot. Leon Spinks, for example,
+
+</xmp>
+
+<script src="http://strapdownjs.com/v/0.2/strapdown.js"></script>
+</html>
